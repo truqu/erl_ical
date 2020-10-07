@@ -1,3 +1,177 @@
 -module(erl_ical).
 
--export([]).
+-record( calendar
+       , { prod_id :: binary()
+         , components :: [component(), ...]
+         , name = null :: null | binary()
+         , refresh_interval = null :: null | binary()
+         , color = null :: null | binary()
+         }
+       ).
+-record( event
+       , { timestamp :: calendar:datetime1970()
+         , start :: calendar:date() | calendar:datetime1970()
+         , 'end' = null :: null | calendar:date() | calendar:datetime1970()
+         , uid :: binary()
+         , summary = null :: null | binary()
+         , description = null :: null | binary()
+         , repeat = null :: null | repeat()
+         , url = null :: null | binary()
+         , is_free = false :: boolean()
+         }
+       ).
+
+-type component() :: event().
+-type repeat() :: yearly.
+
+-opaque event() :: #event{}.
+-opaque calendar() :: #calendar{}.
+
+-export_type([calendar/0, component/0, event/0, repeat/0]).
+
+%% Building
+-export([ calendar/2
+        , with_name/2
+        , with_refresh_interval/2
+        , with_color/2
+        , event/2
+        , with_summary/2
+        , with_description/2
+        , with_repeat/2
+        , with_url/2
+        , all_day/1
+        , free/1
+        ]).
+
+%% Encoding
+-export([encode/1]).
+
+-define(CRLF, "\r\n").
+
+%%==============================================================================================
+%% Building
+%%==============================================================================================
+
+-spec calendar(ProdId :: binary(), Components :: [component(), ...]) -> calendar().
+calendar(ProdId, Components) -> #calendar{prod_id = ProdId, components = Components}.
+
+-spec with_name(binary(), calendar()) -> calendar().
+with_name(Name, Calendar) -> Calendar#calendar{name = Name}.
+
+-spec with_refresh_interval(binary(), calendar()) -> calendar().
+with_refresh_interval(Interval, Calendar) -> Calendar#calendar{refresh_interval = Interval}.
+
+-spec with_color(binary(), calendar()) -> calendar().
+with_color(Color, Calendar) -> Calendar#calendar{color = Color}.
+
+-spec event(TimeStamp :: calendar:date() | calendar:datetime1970(), UId :: binary()) -> event().
+event(TimeStamp, UId) -> #event{timestamp = TimeStamp, start = TimeStamp, uid = UId}.
+
+-spec with_summary(binary(), event()) -> event().
+with_summary(Summary, Event) -> Event#event{summary = Summary}.
+
+-spec with_description(binary(), event()) -> event().
+with_description(Description, Event) -> Event#event{description = Description}.
+
+-spec with_repeat(repeat(), event()) -> event().
+with_repeat(Repeat, Event) -> Event#event{repeat = Repeat}.
+
+-spec with_url(binary(), event()) -> event().
+with_url(Url, Event) -> Event#event{url = Url}.
+
+-spec all_day(event()) -> event().
+all_day(Event = #event{start = {_, _, _} = Start}) -> Event#event{'end' = add_days(Start, 1)};
+all_day(Event = #event{start = {Date, _}}) ->
+  Event#event{start = Date, 'end' = add_days(Date, 1)}.
+
+-spec add_days(calendar:date(), integer()) -> calendar:date().
+add_days(Date, Days) ->
+  calendar:gregorian_days_to_date(calendar:date_to_gregorian_days(Date) + Days).
+
+-spec free(event()) -> event().
+free(Event) -> Event#event{is_free = true}.
+
+%%==============================================================================================
+%% Encoding
+%%==============================================================================================
+
+-spec encode(calendar()) -> iodata().
+encode(Calendar) ->
+  [ kvPair("BEGIN", "VCALENDAR")
+  , kvPair("VERSION", "2.0")
+  , kvPair("PRODID", Calendar#calendar.prod_id)
+  , kvPair("NAME", Calendar#calendar.name)
+  , kvPair("COLOR", Calendar#calendar.color)
+  , kvPair("X-WR-CALNAME", Calendar#calendar.name)
+  , kvPair("REFRESH-INTERVAL;VALUE=DURATION", Calendar#calendar.refresh_interval)
+  , kvPair("X-PUBLISHED-TTL", Calendar#calendar.refresh_interval)
+  , lists:map(fun encode_component/1, Calendar#calendar.components)
+  , kvPair("END", "VCALENDAR")
+  ].
+
+-spec kvPair(iodata(), iodata()) -> iodata().
+kvPair(_, null) -> [];
+kvPair(Key, Value) ->
+  split_lines([ Key
+              , $:
+              , binary:replace(iolist_to_binary(Value), <<"\n">>, <<"\\n">>, [global])
+              , ?CRLF
+              ]).
+
+-spec split_lines(iodata()) -> iodata().
+split_lines(Line) ->
+  case iolist_size(Line) of
+    X when X > 77 ->
+      BLine = iolist_to_binary(Line),
+      [ binary:part(BLine, 0, 75)
+      , ?CRLF
+      , split_lines([$\s, binary:part(BLine, 75, byte_size(BLine) - 75)])
+      ];
+    _ -> Line
+  end.
+
+-spec encode_component(component()) -> iodata().
+encode_component(Event = #event{}) ->
+  [ kvPair("BEGIN", "VEVENT")
+  , kvPair("UID", Event#event.uid)
+  , kvPair("DTSTAMP", encode_timestamp(Event#event.timestamp))
+  , kvPair("DTSTART", encode_timestamp(Event#event.start))
+  , kvPair("DTEND", encode_timestamp(Event#event.'end'))
+  , kvPair("RRULE", encode_repeat(Event#event.repeat, Event#event.start))
+  , kvPair("SUMMARY", Event#event.summary)
+  , kvPair("DESCRIPTION", Event#event.description)
+  , kvPair("URL;VALUE=URI", Event#event.url)
+  , kvPair("X-MICROSOFT-CDO-BUSYSTATUS", encode_free(Event#event.is_free))
+  , kvPair("TRANSP", encode_transparency(Event#event.is_free))
+  , kvPair("END", "VEVENT")
+  ].
+
+-spec encode_repeat(null | repeat(), TimeStamp) -> null | iodata() when
+    TimeStamp :: calendar:date() | calendar:datetime1970().
+encode_repeat(null, _) -> null;
+encode_repeat(yearly, {_, M, D}) ->
+  io_lib:format("FREQ=YEARLY;INTERVAL=1;BYMONTH=~2.10.0B;BYMONTHDAY=~2.10.0B", [M, D]);
+encode_repeat(Repeat, {Date, _}) -> encode_repeat(Repeat, Date).
+
+-spec encode_timestamp(null) -> null;
+                      (calendar:date() | calendar:datetime1970()) -> iodata().
+encode_timestamp(null) -> null;
+encode_timestamp({Y, M, D}) -> io_lib:format("~4.10.0B~2.10.0B~2.10.0B", [Y, M, D]);
+encode_timestamp({{Y, M, D}, {H, I, S}}) ->
+  io_lib:format("~4.10.0B~2.10.0B~2.10.0BT~2.10.0B~2.10.0B~2.10.0BZ", [Y, M, D, H, I, S]).
+
+-spec encode_free(boolean()) -> null | iodata().
+encode_free(false) -> null;
+encode_free(true) -> "FREE".
+
+-spec encode_transparency(boolean()) -> iodata().
+encode_transparency(false) -> "OPAQUE";
+encode_transparency(true) -> "TRANSPARENT".
+
+%% Local variables:
+%% mode: erlang
+%% erlang-indent-level: 2
+%% indent-tabs-mode: nil
+%% fill-column: 96
+%% coding: utf-8
+%% End:
