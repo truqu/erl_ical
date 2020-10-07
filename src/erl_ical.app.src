@@ -1,14 +1,12 @@
-{application, erl_ical,
- [{description, "An RFC 5545 iCalendar encoder for Erlang"},
-  {vsn, "0.1.0"},
-  {registered, []},
-  {applications,
-   [kernel,
-    stdlib
-   ]},
-  {env,[]},
-  {modules, []},
-
-  {licenses, ["Apache 2.0"]},
-  {links, []}
- ]}.
+{ application
+, erl_ical
+, [ {description, "An RFC 5545 iCalendar encoder for Erlang"}
+  , {vsn, "0.1.0"}
+  , {registered, []}
+  , {applications, [kernel, stdlib]}
+  , {env, []}
+  , {modules, []}
+  , {licenses, ["Apache 2.0"]}
+  , {links, []}
+  ]
+}.
