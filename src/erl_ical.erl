@@ -78,6 +78,7 @@ with_color(Color, Calendar) -> Calendar#calendar{color = Color}.
 %%==============================================================================================
 
 -spec event(TimeStamp :: calendar:date() | calendar:datetime1970(), UId :: binary()) -> event().
+event({_, _, _} = Date, UId) -> #event{timestamp = {Date, {0, 0, 0}}, start = Date, uid = UId};
 event(TimeStamp, UId) -> #event{timestamp = TimeStamp, start = TimeStamp, uid = UId}.
 
 -spec with_summary(binary(), event()) -> event().
@@ -230,10 +231,7 @@ encode_time_or_date({{Y, M, D}, {H, I, S}}) ->
                , [Y, M, D, H, I, round(S)]
                ).
 
--spec encode_timestamp(null) -> null;
-                      (calendar:date() | calendar:datetime1970()) -> iodata().
-encode_timestamp(null) -> null;
-encode_timestamp({_, _, _} = Date) -> encode_timestamp({Date, {0, 0, 0}});
+-spec encode_timestamp(calendar:datetime1970()) -> iodata().
 encode_timestamp({{Y, M, D}, {H, I, S}}) ->
   io_lib:format( "~4.10.0B~2.10.0B~2.10.0BT~2.10.0B~2.10.0B~2.10.0BZ"
                , [Y, M, D, H, I, round(S)]
